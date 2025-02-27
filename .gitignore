@@ -1,0 +1,11 @@
+# Node.js модули
+node_modules/
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+config.json
+
+# Файлы зависимостей
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
