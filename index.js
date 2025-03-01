@@ -111,20 +111,7 @@ if (!config.auth_token) {
 
         app.get("/api/getme", async (req, res) => {
             try {
-                let receivedToken = req.headers["authorization"]?.replace("Bearer ", "") || req.query.token || "";
-
-                if (!config.authToken) {
-                    // Если токена нет в конфиге, принимаем первый присланный и сохраняем
-                    if (receivedToken) {
-                        config.authToken = receivedToken;
-                        saveConfig(config);
-                    } else {
-                        return res.status(401).json({ error: "Unauthorized", isactivate: false });
-                    }
-                } else if (receivedToken !== config.authToken) {
-                    return res.status(403).json({ error: "Forbidden", isactivate: false });
-                }
-
+            
                 const me = await client.getMe();
 
                 res.json({
@@ -146,14 +133,7 @@ if (!config.auth_token) {
 
         app.get("/api/chats", async (req, res) => {
             try {
-                let receivedToken = req.headers["authorization"]?.replace("Bearer ", "") || req.query.token || "";
-
-                if (!config.authToken) {
-                    return res.status(401).json({ error: "Unauthorized" });
-                } else if (receivedToken !== config.authToken) {
-                    return res.status(403).json({ error: "Forbidden" });
-                }
-
+                
                 const dialogs = await client.getDialogs();
                 const chatList = dialogs
                     .map(dialog => dialog.entity)
@@ -182,14 +162,7 @@ if (!config.auth_token) {
 
         app.get("/api/chats/page/:page", async (req, res) => {
             try {
-                let receivedToken = req.headers["authorization"]?.replace("Bearer ", "") || req.query.token || "";
-
-                if (!config.authToken) {
-                    return res.status(401).json({ error: "Unauthorized" });
-                } else if (receivedToken !== config.authToken) {
-                    return res.status(403).json({ error: "Forbidden" });
-                }
-
+                
                 const page = parseInt(req.params.page, 10) || 1;
                 const pageSize = 15;
                 const dialogs = await client.getDialogs();
@@ -225,14 +198,7 @@ if (!config.auth_token) {
 
         app.get("/api/chat/:chat_id", async (req, res) => {
             try {
-                let receivedToken = req.headers["authorization"]?.replace("Bearer ", "") || req.query.token || "";
-
-                if (!config.authToken) {
-                    return res.status(401).json({ error: "Unauthorized" });
-                } else if (receivedToken !== config.authToken) {
-                    return res.status(403).json({ error: "Forbidden" });
-                }
-
+                
                 // Получаем информацию о текущем пользователе (боте)
                 const me = await client.getMe();
                 const myId = Number(me.id); // Приводим ID бота к числу
@@ -269,13 +235,7 @@ if (!config.auth_token) {
 
         app.post("/api/chat/:chat_id/send", express.json(), async (req, res) => {
             try {
-                let receivedToken = req.headers["authorization"]?.replace("Bearer ", "") || req.query.token || "";
-
-                if (!config.authToken) {
-                    return res.status(401).json({ error: "Unauthorized" });
-                } else if (receivedToken !== config.authToken) {
-                    return res.status(403).json({ error: "Forbidden" });
-                }
+                
 
                 const chatId = Number(req.params.chat_id);
                 const { message } = req.body;
@@ -305,14 +265,7 @@ if (!config.auth_token) {
 
         app.get("/api/chatformsg/:id/:text", async (req, res) => {
             try {
-                let receivedToken = req.headers["authorization"]?.replace("Bearer ", "") || req.query.token || "";
-
-                if (!config.authToken) {
-                    return res.status(401).json({ error: "Unauthorized", status: 0 });
-                } else if (receivedToken !== config.authToken) {
-                    return res.status(403).json({ error: "Forbidden", status: 0 });
-                }
-
+                
                 const chatId = Number(req.params.id);
                 const message = req.params.text;
 
