@@ -6,6 +6,7 @@ const express = require("express");
 const readline = require("readline");
 const util = require("util");
 const os = require("os");
+const apiRoutes = require("./apiRoutes");
 
 const configPath = path.resolve("./config.json");
 
@@ -13,14 +14,12 @@ const defaultConfig = {
     api_id: "",
     api_hash: "",
     auth_token: "",
-    authToken: "",
     isactivate: 1
 };
 
 if (!fs.existsSync(configPath)) {
     fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2), "utf-8");
 }
-
 
 // Функции работы с конфигом
 function loadConfig() {
@@ -66,7 +65,7 @@ async function authenticate() {
             onError: (err) => console.log(`Authentication error: ${err.errorMessage || "Unknown error"}`),
         });
 
-        console.log("Authentication successful. please run again.");
+        console.log("Authentication successful. Please run again.");
         config.auth_token = client.session.save();
         saveConfig(config);
     } catch (err) {
@@ -76,223 +75,320 @@ async function authenticate() {
     }
 }
 
-if (!config.auth_token) {
-    authenticate().then(() => process.exit(0));
-} else {
+async function startBot() {
+    if (!config.auth_token) {
+        await authenticate();
+        process.exit(0);
+    }
+
     console.log("✅ Config loaded successfully. Connecting to Telegram...");
     const apiId = Number(config.api_id);
     const apiHash = config.api_hash;
     const stringSession = new StringSession(config.auth_token);
 
-    const app = express();
-    const port = 3000;
-    app.use(express.json());
+    const client = new TelegramClient(stringSession, apiId, apiHash, {
+        connectionRetries: 5,
+    });
 
-    function stripMarkdown(text) {
-        return text
-            .replace(/\*\*(.*?)\*\*/g, "$1")
-            .replace(/\*(.*?)\*/g, "$1")
-            .replace(/__(.*?)__/g, "$1")
-            .replace(/_(.*?)_/g, "$1")
-            .replace(/```[\s\S]*?```/g, "")
-            .replace(/`([^`]+)`/g, "$1")
-            .replace(/\[(.*?)\]\(.*?\)/g, "$1");
-    }
+    try {
+        await client.start();
+        console.log("✅ Successfully connected to Telegram!");
 
-    (async () => {
-        console.log("Connecting to Telegram...");
-        const client = new TelegramClient(stringSession, apiId, apiHash, {
-            connectionRetries: 5,
-        });
-
-        await client.connect();
-        console.log("Connected.");
-        client.setLogLevel("error");
-
-        app.get("/api/getme", async (req, res) => {
-            try {
-            
-                const me = await client.getMe();
-
-                res.json({
-                    first_name: me.firstName,
-                    last_name: me.lastName || "",
-                    id: me.id,
-                    isactivate: true,
-                });
-
-            } catch (error) {
-                res.status(500).json({ error: "Failed to fetch user data" });
-            }
-        });
-
-
-
-
-
-
-        app.get("/api/chats", async (req, res) => {
-            try {
-                
-                const dialogs = await client.getDialogs();
-                const chatList = dialogs
-                    .map(dialog => dialog.entity)
-                    .filter(entity => !entity.migratedTo) // Убираем устаревшие чаты
-                    .map(entity => ({
-                        id: entity.className === "Channel" ? `-100${entity.id}` : entity.id, // -100 только для каналов и супергрупп
-                        title: entity.title || entity.firstName || "",
-                        first_name: entity.firstName || "",
-                        last_name: entity.lastName || "",
-                        username: entity.username || "",
-                        ispin: entity.pinned ? 1 : 0,
-                        type: entity.className === "Channel" ? (entity.megagroup ? "group" : "channel") : "chat",
-                    }));
-
-                res.json(chatList);
-
-            } catch (error) {
-                res.status(500).json({ error: "Failed to fetch chat data" });
-            }
-        });
-
-
-
-
-
-
-        app.get("/api/chats/page/:page", async (req, res) => {
-            try {
-                
-                const page = parseInt(req.params.page, 10) || 1;
-                const pageSize = 15;
-                const dialogs = await client.getDialogs();
-                const chatList = dialogs
-                    .map(dialog => dialog.entity)
-                    .filter(entity => !entity.migratedTo)
-                    .map(entity => ({
-                        id: entity.className === "Channel" ? `-100${entity.id}` : entity.id, // -100 только для каналов и супергрупп
-                        title: entity.title || entity.firstName || entity.lastName || "",
-                        first_name: entity.firstName || "",
-                        last_name: entity.lastName || "",
-                        username: entity.username || "",
-                        ispin: entity.pinned ? 1 : 0,
-                        type: entity.className === "Channel" ? (entity.megagroup ? "group" : "channel") : "chat",
-                    }));
-
-                const paginatedChats = chatList.slice((page - 1) * pageSize, page * pageSize);
-                res.json({
-                    page,
-                    total_pages: Math.ceil(chatList.length / pageSize),
-                    chats: paginatedChats,
-                });
-
-            } catch (error) {
-                res.status(500).json({ error: "Failed to fetch paginated chat data" });
-            }
-        });
-
-
-
-
-
-
-        app.get("/api/chat/:chat_id", async (req, res) => {
-            try {
-                
-                // Получаем информацию о текущем пользователе (боте)
-                const me = await client.getMe();
-                const myId = Number(me.id); // Приводим ID бота к числу
-
-                const chatId = Number(req.params.chat_id);
-                const messages = await client.getMessages(chatId, { limit: 10 });
-
-                const filteredMessages = messages.reduce((acc, msg) => {
-                    if (msg.text || !msg.media) {
-                        acc.push({
-                            id: msg.id,
-                            date: msg.date,
-                            sender_id: Number(msg.senderId) || null, // Приводим sender_id к числу
-                            sender: msg.sender?.firstName || msg.sender?.title || "Unknown",
-                            text: stripMarkdown(msg.text),
-                            reactions: msg.reactions ? msg.reactions.results.map(r => `${JSON.stringify(r.reaction)} x${r.count}`).join(", ") : "",
-                            you: Number(msg.senderId) === myId // Теперь сравнение всегда между числами
-                        });
-                    }
-                    return acc;
-                }, []);
-
-                res.json(filteredMessages);
-            } catch (error) {
-                console.error("Error fetching chat messages:", error);
-                res.status(500).json({ error: "Failed to fetch chat messages" });
-            }
-        });
-
-
-
-
-
-
-        app.post("/api/chat/:chat_id/send", express.json(), async (req, res) => {
-            try {
-                
-
-                const chatId = Number(req.params.chat_id);
-                const { message } = req.body;
-
-                if (!message || typeof message !== "string") {
-                    return res.status(400).json({ error: "Message text is required and must be a string." });
-                }
-
-                // Отправляем сообщение
-                const sentMessage = await client.sendMessage(chatId, { message });
-
-                if (!sentMessage) {
-                    return res.status(500).json({ error: "Failed to send message." });
-                }
-
-                res.json({ success: true, message_id: sentMessage.id });
-            } catch (error) {
-                console.error("Error sending message:", error);
-                res.status(500).json({ error: "An unexpected error occurred while sending the message." });
-            }
-        });
-
-
-
-
-
-
-        app.get("/api/chatformsg/:id/:text", async (req, res) => {
-            try {
-                
-                const chatId = Number(req.params.id);
-                const message = req.params.text;
-
-                if (!message || typeof message !== "string") {
-                    return res.status(400).json({ error: "Message text is required and must be a string.", status: 0 });
-                }
-
-                // Отправляем сообщение
-                const sentMessage = await client.sendMessage(chatId, { message });
-
-                if (!sentMessage) {
-                    return res.status(500).json({ error: "Failed to send message.", status: 0 });
-                }
-
-                res.json({ success: true, message_id: sentMessage.id, status: 1 });
-            } catch (error) {
-                console.error("Error sending message:", error);
-                res.status(500).json({ error: "An unexpected error occurred while sending the message.", status: 0 });
-            }
-        });
-
-
+        const app = express();
         const port = 65222;
         const host = "0.0.0.0";
 
+        app.use(express.json());
+        app.use("/api", apiRoutes(client));
+
+        app.get("/", async (req, res) => {
+            try {
+                const me = await client.getMe();
+                const dialogs = await client.getDialogs();
+
+                // Загружаем конфиг
+                let config = loadConfig();
+                if (!Array.isArray(config.whitelist)) config.whitelist = [];
+                if (typeof config.use_whitelist !== "boolean") config.use_whitelist = false;
+                saveConfig(config);
+
+                // Приведение всех ID в whitelist к числам (на всякий случай)
+                config.whitelist = config.whitelist.map(Number);
+
+                // Создаём HTML со списком чатов
+                const allChats = dialogs
+                    .filter(chat => !config.whitelist.includes(Number(chat.id)))
+                    .map(chat => {
+                        return `<div class="chat-item">
+                                    <span>${chat.title || chat.name || "Private Chat"}</span>
+                                    <button class="add" data-id="${chat.id}">+</button>
+                                </div>`;
+                    }).join("");
+
+                const whitelistChats = dialogs
+                    .filter(chat => config.whitelist.includes(Number(chat.id)))
+                    .map(chat => {
+                        return `<div class="chat-item">
+                                    <span>${chat.title || chat.name || "Private Chat"}</span>
+                                    <button class="remove" data-id="${chat.id}">−</button>
+                                </div>`;
+                    }).join("");
+
+                    res.send(`
+                        <!DOCTYPE html>
+                        <html lang="en">
+                        <head>
+                            <meta charset="UTF-8">
+                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                            <title>Telegram Chats</title>
+                            <style>
+                                body {
+                                    font-family: Arial, sans-serif;
+                                    margin: 0;
+                                    padding: 0;
+                                    background-color: #121212;
+                                    color: #ffffff;
+                                    box-sizing: border-box;
+                                }
+                        
+                                .container {
+                                    display: flex;
+                                    gap: 10px;
+                                    width: 100vw;
+                                    height: 100vh;
+                                    overflow: hidden;
+                                    padding: 10px;
+                                    box-sizing: border-box;
+                                }
+                        
+                                .column {
+                                    flex: 1;
+                                    border: 1px solid #333;
+                                    padding: 10px;
+                                    background: #1e1e1e;
+                                    border-radius: 5px;
+                                    overflow-y: auto;
+                                    max-height: 100vh;
+                                    box-sizing: border-box;
+                                    display: flex;
+                                    flex-direction: column;
+                                }
+                        
+                                /* Поиск */
+                                .search-box {
+                                    margin-bottom: 10px;
+                                }
+                                
+                                .search-box input {
+                                    width: 100%;
+                                    padding: 8px;
+                                    font-size: 14px;
+                                    border: none;
+                                    border-radius: 4px;
+                                    background: #333;
+                                    color: white;
+                                    outline: none;
+                                }
+                        
+                                .chat-list {
+                                    flex-grow: 1;
+                                    overflow-y: auto;
+                                }
+                        
+                                .chat-item {
+                                    display: flex;
+                                    justify-content: space-between;
+                                    align-items: center;
+                                    padding: 10px;
+                                    border-bottom: 1px solid #333;
+                                }
+                        
+                                .chat-item:last-child {
+                                    border-bottom: none;
+                                }
+                        
+                                button {
+                                    background: #007bff;
+                                    color: white;
+                                    border: none;
+                                    padding: 5px 10px;
+                                    cursor: pointer;
+                                    border-radius: 3px;
+                                    transition: background 0.3s;
+                                }
+                        
+                                button:hover {
+                                    background: #0056b3;
+                                }
+                        
+                                button.remove {
+                                    background: #dc3545;
+                                }
+                        
+                                button.remove:hover {
+                                    background: #b52a37;
+                                }
+                        
+                                /* Тумблер */
+                                .toggle-container {
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    margin-bottom: 10px;
+                                }
+                        
+                                .toggle-label {
+                                    font-size: 16px;
+                                    margin-right: 10px;
+                                }
+                        
+                                .toggle-switch {
+                                    width: 50px;
+                                    height: 24px;
+                                    background: #444;
+                                    border-radius: 12px;
+                                    position: relative;
+                                    cursor: pointer;
+                                    transition: background 0.3s;
+                                }
+                        
+                                .toggle-switch:before {
+                                    content: "";
+                                    position: absolute;
+                                    top: 3px;
+                                    left: 3px;
+                                    width: 18px;
+                                    height: 18px;
+                                    background: white;
+                                    border-radius: 50%;
+                                    transition: transform 0.3s;
+                                }
+                        
+                                .toggle-switch.active {
+                                    background: #28a745;
+                                }
+                        
+                                .toggle-switch.active:before {
+                                    transform: translateX(26px);
+                                }
+                        
+                                /* Адаптация для телефонов */
+                                @media (max-width: 600px) {
+                                    .container {
+                                        flex-direction: column;
+                                        height: 100vh;
+                                    }
+                                    .column {
+                                        width: 100vw;
+                                        height: 50vh;
+                                    }
+                                }
+                            </style>
+                        </head>
+                        <body>
+                            <div class="toggle-container">
+                                <label class="toggle-label">Use Whitelist:</label>
+                                <div class="toggle-switch ${config.use_whitelist ? "active" : ""}" id="toggleWhitelist"></div>
+                            </div>
+                            <div class="container">
+                                <div class="column">
+                                    <h2>All Chats</h2>
+                                    <div class="search-box">
+                                        <input type="text" id="searchAll" placeholder="Search...">
+                                    </div>
+                                    <div id="allChats">${allChats}</div>
+                                </div>
+                                <div class="column">
+                                    <h2>Whitelist</h2>
+                                    <div class="search-box">
+                                        <input type="text" id="searchWhitelist" placeholder="Search...">
+                                    </div>
+                                    <div id="whitelist">${whitelistChats}</div>
+                                </div>
+                            </div>
+                            <script>
+                                document.getElementById("toggleWhitelist").addEventListener("click", function() {
+                                    this.classList.toggle("active");
+                                    fetch("/toggle-whitelist", { 
+                                        method: "POST", 
+                                        body: JSON.stringify({ use_whitelist: this.classList.contains("active") }), 
+                                        headers: { "Content-Type": "application/json" } 
+                                    });
+                                });
+                        
+                                document.body.addEventListener("click", function(event) {
+                                    if (event.target.classList.contains("add")) {
+                                        fetch("/add-to-whitelist", { 
+                                            method: "POST", 
+                                            body: JSON.stringify({ chat_id: event.target.dataset.id }), 
+                                            headers: { "Content-Type": "application/json" } 
+                                        }).then(() => location.reload());
+                                    }
+                                    if (event.target.classList.contains("remove")) {
+                                        fetch("/remove-from-whitelist", { 
+                                            method: "POST", 
+                                            body: JSON.stringify({ chat_id: event.target.dataset.id }), 
+                                            headers: { "Content-Type": "application/json" } 
+                                        }).then(() => location.reload());
+                                    }
+                                });
+                                
+                                function filterChats(inputId, containerId) {
+                                    document.getElementById(inputId).addEventListener("input", function() {
+                                        let filter = this.value.toLowerCase();
+                                        let container = document.getElementById(containerId);
+                                        let chats = container ? Array.from(container.getElementsByClassName("chat-item")) : [];
+                                        chats.forEach(chat => {
+                                            chat.style.display = chat.textContent.toLowerCase().includes(filter) ? "flex" : "none";
+                                        });
+
+                                    });
+                                }
+                                
+                                filterChats("searchAll", "allChats");
+                                filterChats("searchWhitelist", "whitelist");
+                            </script>
+                        </body>
+                        </html>
+                        `);
+                        
+            } catch (error) {
+                res.status(500).send("Error retrieving chat list");
+            }
+        });
+
+        // API для работы с конфигом
+        app.post("/toggle-whitelist", express.json(), (req, res) => {
+            let config = loadConfig();
+            config.use_whitelist = req.body.use_whitelist;
+            saveConfig(config);
+            res.sendStatus(200);
+        });
+
+        app.post("/add-to-whitelist", express.json(), (req, res) => {
+            let config = loadConfig();
+            let chatId = Number(req.body.chat_id);
+            if (!config.whitelist.includes(chatId)) {
+                config.whitelist.push(chatId);
+                saveConfig(config);
+            }
+            res.sendStatus(200);
+        });
+
+        app.post("/remove-from-whitelist", express.json(), (req, res) => {
+            let config = loadConfig();
+            let chatId = Number(req.body.chat_id);
+            config.whitelist = config.whitelist.filter(id => id !== chatId);
+            saveConfig(config);
+            res.sendStatus(200);
+        });
+
+
+
+
+
         app.listen(port, host, () => {
-            console.log(`Server is running on:`);
+            console.log(`🚀 Server is running on:`);
 
             const interfaces = os.networkInterfaces();
             Object.values(interfaces).forEach((iface) => {
@@ -304,5 +400,10 @@ if (!config.auth_token) {
             });
         });
 
-    })();
+    } catch (error) {
+        console.error("❌ Failed to connect to Telegram:", error);
+        process.exit(1);
+    }
 }
+
+startBot();

@@ -1,11 +1,18 @@
 {
   "dependencies": {
+    "body-parser": "^1.20.3",
+    "ejs": "^3.1.10",
     "express": "^4.21.2",
+    "readline-sync": "^1.4.10",
+    "socket.io": "^4.8.1",
     "telegram": "^2.26.22"
   },
   "pkg": {
     "scripts": [],
     "assets": [],
-    "dependencies": ["express", "telegram"]
+    "dependencies": [
+      "express",
+      "telegram"
+    ]
   }
 }
